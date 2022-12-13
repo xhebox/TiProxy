@@ -25,6 +25,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/panjf2000/gnet/v2"
 	"github.com/pingcap/TiProxy/lib/util/errors"
 	"github.com/pingcap/TiProxy/lib/util/waitgroup"
 	pnet "github.com/pingcap/TiProxy/pkg/proxy/net"
@@ -34,6 +35,17 @@ import (
 
 var (
 	ErrClientConn = errors.New("this is an error from client")
+)
+
+type ClientConnectionState = int64
+
+const (
+	// write initial handshake
+	ConnStateHandshakeBegin ClientConnectionState = iota
+	// wait for SSL or resp
+	ConnStateHandshakeSSL
+	ConnStateForward
+	ClientConnectionStateClose
 )
 
 // ClientConnection migrates a session from one BackendConnection to another.
@@ -46,6 +58,8 @@ var (
 // - If it retries after each command: the latency will be unacceptable afterwards if it always fails.
 // - If it stops receiving signals: the previous new backend may be abnormal but the next new backend may be good.
 type ClientConnection struct {
+	state atomic.Int64
+	busy  atomic.Bool
 	// processLock makes redirecting and command processing exclusive.
 	processLock       sync.Mutex
 	wg                waitgroup.WaitGroup
@@ -98,8 +112,8 @@ func NewClientConnection(logger *zap.Logger, frontendTLSConfig *tls.Config, back
 
 // ConnectionID implements RedirectableConn.ConnectionID interface.
 // It returns the ID of the frontend connection. The ID stays still after session migration.
-func (mgr *ClientConnection) ConnectionID() uint64 {
-	return mgr.connectionID
+func (cc *ClientConnection) ConnectionID() uint64 {
+	return cc.connectionID
 }
 
 func (cc *ClientConnection) Run(ctx context.Context, conn net.Conn) {
@@ -123,6 +137,18 @@ func (cc *ClientConnection) Run(ctx context.Context, conn net.Conn) {
 	}
 
 clean:
+	cc.handleConnErr(err, msg)
+}
+
+func (cc *ClientConnection) handleConnErr(err error, msg string) {
+	cc.logger.Info("gg", zap.String("msg", msg), zap.Error(err))
+
+	if err == nil {
+		return
+	}
+
+	cc.state.Store(ClientConnectionStateClose)
+
 	clientErr := errors.Is(err, ErrClientConn)
 	// EOF: client closes; DeadlineExceeded: graceful shutdown; Closed: shut down.
 	if clientErr && (errors.Is(err, io.EOF) || errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, net.ErrClosed)) {
@@ -151,7 +177,7 @@ func (cc *ClientConnection) processMsg(ctx context.Context) error {
 }
 
 // Close releases all resources.
-func (cc *ClientConnection) Close() error {
+func (cc *ClientConnection) Close() {
 	cc.closeStatus.Store(statusClosing)
 	if cc.checkBackendTicker != nil {
 		cc.checkBackendTicker.Stop()
@@ -188,5 +214,59 @@ func (cc *ClientConnection) Close() error {
 		}
 	}
 	cc.closeStatus.Store(statusClosed)
-	return errors.Collect(ErrCloseConnMgr, connErr, handErr, cc.clientIO.Close())
+	err := errors.Collect(ErrCloseConnMgr, connErr, handErr, cc.clientIO.Close())
+	if err != nil && !pnet.IsDisconnectError(err) {
+		cc.logger.Error("close connection fails", zap.Error(err))
+	} else {
+		cc.logger.Info("connection closed")
+	}
+	cc.wg.Wait()
+}
+
+func (cc *ClientConnection) processSingleMsg(ctx context.Context) error {
+	cc.clientIO.ResetSequence()
+	clientPkt, err := cc.clientIO.ReadPacket()
+	if err != nil {
+		return err
+	}
+	err = cc.ExecuteCmd(ctx, clientPkt)
+	if err != nil {
+		return err
+	}
+	cmd := clientPkt[0]
+	switch cmd {
+	case mysql.ComQuit:
+		return ErrCloseConn
+	}
+	return nil
+}
+
+func (cc *ClientConnection) OnTraffic(c gnet.Conn) {
+	busy := cc.busy.Load()
+	state := cc.state.Load()
+
+	cc.logger.Info("state", zap.Any("state", state), zap.Any("busy", busy))
+	if busy {
+		return
+	}
+	cc.busy.Store(true)
+	switch state {
+	case ConnStateHandshakeBegin:
+		cc.wg.Run(func() {
+			cc.handleConnErr(
+				cc.Connect(context.TODO(), cc.clientIO),
+				"new connection failed",
+			)
+			cc.busy.Store(false)
+		})
+	case ConnStateForward:
+		cc.wg.Run(func() {
+			cc.handleConnErr(
+				cc.processSingleMsg(context.TODO()),
+				"fails to relay the connection",
+			)
+			cc.busy.Store(false)
+		})
+	default:
+	}
 }

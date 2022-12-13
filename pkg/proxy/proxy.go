@@ -16,17 +16,15 @@ package proxy
 
 import (
 	"context"
-	"net"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/lesismal/nbio"
 	"github.com/pingcap/TiProxy/lib/config"
-	"github.com/pingcap/TiProxy/lib/util/errors"
 	"github.com/pingcap/TiProxy/lib/util/waitgroup"
 	"github.com/pingcap/TiProxy/pkg/manager/cert"
-	"github.com/pingcap/TiProxy/pkg/metrics"
 	"github.com/pingcap/TiProxy/pkg/proxy/client"
-	pnet "github.com/pingcap/TiProxy/pkg/proxy/net"
 	"go.uber.org/zap"
 )
 
@@ -42,8 +40,8 @@ type serverState struct {
 }
 
 type SQLServer struct {
-	listener          net.Listener
 	logger            *zap.Logger
+	eng               *nbio.Engine
 	certMgr           *cert.CertManager
 	hsHandler         client.HandshakeHandler
 	requireBackendTLS bool
@@ -55,13 +53,19 @@ type SQLServer struct {
 
 // NewSQLServer creates a new SQLServer.
 func NewSQLServer(logger *zap.Logger, cfg config.ProxyServer, certMgr *cert.CertManager, hsHandler client.HandshakeHandler) (*SQLServer, error) {
-	var err error
-
 	s := &SQLServer{
 		logger:            logger,
 		certMgr:           certMgr,
 		hsHandler:         hsHandler,
 		requireBackendTLS: cfg.RequireBackendTLS,
+		eng: nbio.NewEngine(nbio.Config{
+			Addrs: []string{
+				fmt.Sprintf("tcp://%s", cfg.Addr),
+			},
+			NPoller:      1,
+			LockListener: true,
+			LockPoller:   true,
+		}),
 		mu: serverState{
 			connID:  0,
 			clients: make(map[uint64]*client.ClientConnection),
@@ -70,10 +74,9 @@ func NewSQLServer(logger *zap.Logger, cfg config.ProxyServer, certMgr *cert.Cert
 
 	s.reset(&cfg.ProxyServerOnline)
 
-	s.listener, err = net.Listen("tcp", cfg.Addr)
-	if err != nil {
-		return nil, err
-	}
+	s.eng.OnOpen(s.onOpen)
+	s.eng.OnData(s.onRead)
+	s.eng.OnClose(s.onClose)
 
 	return s, nil
 }
@@ -106,83 +109,7 @@ func (s *SQLServer) Run(ctx context.Context, cfgch <-chan *config.Config) {
 		}
 	})
 
-	s.wg.Run(func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				conn, err := s.listener.Accept()
-				if err != nil {
-					if errors.Is(err, net.ErrClosed) {
-						return
-					}
-
-					s.logger.Error("accept failed", zap.Error(err))
-					continue
-				}
-
-				s.wg.Run(func() {
-					s.onConn(ctx, conn)
-				})
-			}
-		}
-	})
-}
-
-func (s *SQLServer) onConn(ctx context.Context, conn net.Conn) {
-	s.mu.Lock()
-	conns := uint64(len(s.mu.clients))
-	maxConns := s.mu.maxConnections
-	tcpKeepAlive := s.mu.tcpKeepAlive
-
-	// 'maxConns == 0' => unlimited connections
-	if maxConns != 0 && conns >= maxConns {
-		s.mu.Unlock()
-		s.logger.Warn("too many connections", zap.Uint64("max connections", maxConns), zap.String("addr", conn.RemoteAddr().Network()), zap.Error(conn.Close()))
-		return
-	}
-	if s.mu.inShutdown {
-		s.mu.Unlock()
-		s.logger.Warn("in shutdown", zap.String("addr", conn.RemoteAddr().Network()), zap.Error(conn.Close()))
-		return
-	}
-
-	connID := s.mu.connID
-	s.mu.connID++
-	logger := s.logger.With(zap.Uint64("connID", connID), zap.String("remoteAddr", conn.RemoteAddr().String()))
-	clientConn := client.NewClientConnection(logger.Named("conn"), s.certMgr.ServerTLS(), s.certMgr.SQLTLS(), s.hsHandler, connID, &client.BCConfig{
-		ProxyProtocol:     s.mu.proxyProtocol,
-		RequireBackendTLS: s.requireBackendTLS,
-	})
-	s.mu.clients[connID] = clientConn
-	s.mu.Unlock()
-
-	logger.Info("new connection")
-	metrics.ConnGauge.Inc()
-
-	defer func() {
-		s.mu.Lock()
-		delete(s.mu.clients, connID)
-		s.mu.Unlock()
-
-		if err := clientConn.Close(); err != nil && !pnet.IsDisconnectError(err) {
-			logger.Error("close connection fails", zap.Error(err))
-		} else {
-			logger.Info("connection closed")
-		}
-		metrics.ConnGauge.Dec()
-	}()
-
-	if tcpKeepAlive {
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			if err := tcpConn.SetKeepAlive(true); err != nil {
-				logger.Warn("failed to set tcp keep alive option", zap.Error(err))
-			}
-		}
-	}
-
-	clientConn.Run(ctx, conn)
+	s.logger.Info("run SQL server", zap.Error(s.eng.Start()))
 }
 
 // Graceful shutdown doesn't close the listener but rejects new connections.
@@ -226,19 +153,14 @@ func (s *SQLServer) Close() error {
 		s.cancelFunc()
 		s.cancelFunc = nil
 	}
-	errs := make([]error, 0, 4)
-	if s.listener != nil {
-		errs = append(errs, s.listener.Close())
-	}
 
 	s.mu.Lock()
 	for _, conn := range s.mu.clients {
-		if err := conn.Close(); err != nil {
-			errs = append(errs, err)
-		}
+		conn.Close()
 	}
 	s.mu.Unlock()
 
+	s.eng.Stop()
 	s.wg.Wait()
-	return errors.Collect(ErrCloseServer, errs...)
+	return nil
 }

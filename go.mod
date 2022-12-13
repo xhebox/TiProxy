@@ -10,6 +10,7 @@ require (
 	github.com/gin-contrib/pprof v1.4.0
 	github.com/gin-gonic/gin v1.8.1
 	github.com/go-mysql-org/go-mysql v1.6.0
+	github.com/panjf2000/gnet/v2 v2.2.1
 	github.com/pingcap/TiProxy/lib v0.0.0-00010101000000-000000000000
 	github.com/pingcap/tidb v1.1.0-beta.0.20230103132820-3ccff46aa3bc
 	github.com/pingcap/tidb/parser v0.0.0-20230103132820-3ccff46aa3bc
@@ -72,6 +73,7 @@ require (
 	github.com/kr/pretty v0.3.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.2.1 // indirect
+	github.com/lesismal/nbio v1.3.10 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
@@ -81,6 +83,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
 	github.com/opentracing/basictracer-go v1.0.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
+	github.com/panjf2000/ants v1.3.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.5 // indirect
 	github.com/pingcap/check v0.0.0-20211026125417-57bd13f7b5f0 // indirect
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32 // indirect
