@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/TiProxy/pkg/manager/router"
 	"github.com/pingcap/TiProxy/pkg/metrics"
 	"github.com/pingcap/TiProxy/pkg/proxy"
-	"github.com/pingcap/TiProxy/pkg/proxy/backend"
+	"github.com/pingcap/TiProxy/pkg/proxy/client"
 	"github.com/pingcap/TiProxy/pkg/sctx"
 	"github.com/pingcap/TiProxy/pkg/server/api"
 	clientv3 "go.etcd.io/etcd/client/v3"

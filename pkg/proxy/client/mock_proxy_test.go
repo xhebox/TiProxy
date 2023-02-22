@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package backend
+package client
 
 import (
 	"crypto/tls"
@@ -45,7 +45,7 @@ func newProxyConfig() *proxyConfig {
 }
 
 type mockProxy struct {
-	*BackendConnManager
+	*ClientConnection
 
 	*proxyConfig
 	// outputs that received from the server.
@@ -60,9 +60,10 @@ func newMockProxy(t *testing.T, cfg *proxyConfig) *mockProxy {
 	mp := &mockProxy{
 		proxyConfig: cfg,
 		logger:      logger.CreateLoggerForTest(t).Named("mockProxy"),
-		BackendConnManager: NewBackendConnManager(logger.CreateLoggerForTest(t), cfg.handler, 0, &BCConfig{
-			CheckBackendInterval: cfg.checkBackendInterval,
-		}),
+		ClientConnection: NewClientConnection(logger.CreateLoggerForTest(t),
+			cfg.frontendTLSConfig, cfg.backendTLSConfig, cfg.handler, 0, &BCConfig{
+				CheckBackendInterval: cfg.checkBackendInterval,
+			}),
 	}
 	mp.cmdProcessor.capability = cfg.capability.Uint32()
 	return mp
@@ -71,7 +72,7 @@ func newMockProxy(t *testing.T, cfg *proxyConfig) *mockProxy {
 func (mp *mockProxy) authenticateFirstTime(clientIO, backendIO *pnet.PacketIO) error {
 	if err := mp.authenticator.handshakeFirstTime(mp.logger, mp, clientIO, mp.handshakeHandler, func(ctx ConnContext, auth *Authenticator, resp *pnet.HandshakeResp, timeout time.Duration) (*pnet.PacketIO, error) {
 		return backendIO, nil
-	}, mp.frontendTLSConfig, mp.backendTLSConfig); err != nil {
+	}, mp.proxyConfig.frontendTLSConfig, mp.proxyConfig.backendTLSConfig); err != nil {
 		return err
 	}
 	mp.cmdProcessor.capability = mp.authenticator.capability
@@ -79,7 +80,7 @@ func (mp *mockProxy) authenticateFirstTime(clientIO, backendIO *pnet.PacketIO) e
 }
 
 func (mp *mockProxy) authenticateSecondTime(clientIO, backendIO *pnet.PacketIO) error {
-	return mp.authenticator.handshakeSecondTime(mp.logger, clientIO, backendIO, mp.backendTLSConfig, mp.sessionToken)
+	return mp.authenticator.handshakeSecondTime(mp.logger, clientIO, backendIO, mp.proxyConfig.backendTLSConfig, mp.sessionToken)
 }
 
 func (mp *mockProxy) processCmd(clientIO, backendIO *pnet.PacketIO) error {

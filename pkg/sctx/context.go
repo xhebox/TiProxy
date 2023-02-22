@@ -17,7 +17,7 @@ package sctx
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/pingcap/TiProxy/lib/config"
-	"github.com/pingcap/TiProxy/pkg/proxy/backend"
+	"github.com/pingcap/TiProxy/pkg/proxy/client"
 )
 
 type Context struct {
@@ -27,6 +27,6 @@ type Context struct {
 }
 
 type ServerHandler interface {
-	backend.HandshakeHandler
+	client.HandshakeHandler
 	RegisterHTTP(c *gin.Engine) error
 }
