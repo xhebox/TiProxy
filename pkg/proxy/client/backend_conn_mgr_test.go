@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package backend
+package client
 
 import (
 	"context"
@@ -123,7 +123,7 @@ func newBackendMgrTester(t *testing.T, cfg ...cfgOverrider) *backendMgrTester {
 
 // Define some common runners here to reduce code redundancy.
 func (ts *backendMgrTester) firstHandshake4Proxy(clientIO, backendIO *pnet.PacketIO) error {
-	err := ts.mp.Connect(context.Background(), clientIO, ts.mp.frontendTLSConfig, ts.mp.backendTLSConfig)
+	err := ts.mp.Connect(context.Background(), clientIO)
 	require.NoError(ts.t, err)
 	mer := newMockEventReceiver()
 	ts.mp.SetEventReceiver(mer)
@@ -378,7 +378,7 @@ func TestConnectFail(t *testing.T) {
 		{
 			client: ts.mc.authenticate,
 			proxy: func(clientIO, backendIO *pnet.PacketIO) error {
-				return ts.mp.Connect(context.Background(), clientIO, ts.mp.frontendTLSConfig, ts.mp.backendTLSConfig)
+				return ts.mp.Connect(context.Background(), clientIO)
 			},
 			backend: func(_ *pnet.PacketIO) error {
 				conn, err := ts.tc.backendListener.Accept()
@@ -730,7 +730,7 @@ func TestHandlerReturnError(t *testing.T) {
 				return nil
 			},
 			proxy: func(clientIO, backendIO *pnet.PacketIO) error {
-				err := ts.mp.Connect(context.Background(), clientIO, ts.mp.frontendTLSConfig, ts.mp.backendTLSConfig)
+				err := ts.mp.Connect(context.Background(), clientIO)
 				require.Error(t, err)
 				return nil
 			},
@@ -763,7 +763,7 @@ func TestGetBackendIO(t *testing.T) {
 			}
 		},
 	}
-	mgr := NewBackendConnManager(logger.CreateLoggerForTest(t), handler, 0, &BCConfig{})
+	mgr := NewClientConnection(logger.CreateLoggerForTest(t), nil, nil, handler, 0, &BCConfig{})
 	var wg waitgroup.WaitGroup
 	for i := 0; i <= len(listeners); i++ {
 		wg.Run(func() {

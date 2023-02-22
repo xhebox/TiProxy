@@ -15,13 +15,11 @@
 package proxy
 
 import (
-	"net"
 	"testing"
 	"time"
 
 	"github.com/pingcap/TiProxy/lib/config"
 	"github.com/pingcap/TiProxy/lib/util/logger"
-	"github.com/pingcap/TiProxy/pkg/proxy/backend"
 	"github.com/pingcap/TiProxy/pkg/proxy/client"
 	"github.com/stretchr/testify/require"
 )
@@ -48,16 +46,9 @@ func TestGracefulShutdown(t *testing.T) {
 	case <-finish:
 	}
 
-	createClientConn := func() *client.ClientConnection {
+	createClientConn := func() *backend.ClientConnection {
 		server.mu.Lock()
-		go func() {
-			conn, err := net.Dial("tcp", server.listener.Addr().String())
-			require.NoError(t, err)
-			require.NoError(t, conn.Close())
-		}()
-		conn, err := server.listener.Accept()
-		require.NoError(t, err)
-		clientConn := client.NewClientConnection(lg, conn, nil, nil, hsHandler, 0, false, false)
+		clientConn := backend.NewClientConnection(lg, nil, nil, hsHandler, 0, &backend.BCConfig{})
 		server.mu.clients[1] = clientConn
 		server.mu.Unlock()
 		return clientConn
