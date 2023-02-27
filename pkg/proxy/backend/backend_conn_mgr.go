@@ -109,6 +109,7 @@ type BackendConnManager struct {
 	signalReceived chan signalType
 	authenticator  *Authenticator
 	cmdProcessor   *CmdProcessor
+	rtdata         *atomic.Value
 	eventReceiver  unsafe.Pointer
 	config         *BCConfig
 	logger         *zap.Logger
@@ -154,6 +155,14 @@ func NewBackendConnManager(logger *zap.Logger, handshakeHandler HandshakeHandler
 // It returns the ID of the frontend connection. The ID stays still after session migration.
 func (mgr *BackendConnManager) ConnectionID() uint64 {
 	return mgr.connectionID
+}
+
+func (mgr *BackendConnManager) SetRouterData(t any) {
+	mgr.rtdata.Store(t)
+}
+
+func (mgr *BackendConnManager) GetRouterData() any {
+	return mgr.rtdata.Load()
 }
 
 // Connect connects to the first backend and then start watching redirection signals.

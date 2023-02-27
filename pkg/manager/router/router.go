@@ -15,9 +15,9 @@
 package router
 
 import (
-	"container/list"
 	"time"
 
+	"github.com/bahlo/generic-list-go"
 	"github.com/pingcap/TiProxy/lib/util/errors"
 )
 
@@ -73,9 +73,10 @@ const (
 // RedirectableConn indicates a redirect-able connection.
 type RedirectableConn interface {
 	SetEventReceiver(receiver ConnEventReceiver)
+	SetRouterData(any)
+	GetRouterData() any
 	Redirect(addr string)
 	GetRedirectingAddr() string
-	ConnectionID() uint64
 }
 
 // backendWrapper contains the connections on the backend.
@@ -84,8 +85,7 @@ type backendWrapper struct {
 	addr   string
 	// A list of *connWrapper and is ordered by the connecting or redirecting time.
 	// connList and connMap include moving out connections but not moving in connections.
-	connList *list.List
-	connMap  map[uint64]*list.Element
+	connList *list.List[*connWrapper]
 }
 
 // score calculates the score of the backend. Larger score indicates higher load.
